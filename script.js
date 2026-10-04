@@ -1,5 +1,5 @@
-// Load saved files without allowing malformed browser data to break startup.
-let files = loadFiles();
+const DIARY_STORAGE_KEY = "ember_files";
+let files;
 let currentFileId = null;
 let moodSelectionTarget = "new";
 let moodTransitioning = false;
@@ -13,6 +13,7 @@ const moods = {
     sad: { label: "Sad", emoji: "😢" },
     angry: { label: "Angry", emoji: "😡" }
 };
+files = loadFiles();
 
 const mbtiGroups = {
     analysts: {
@@ -394,16 +395,15 @@ function createCompanionReply(message) {
 
 function persistCompanionState(file) {
     if (!file) return;
-    file.companionMessages = companionMessages.map(message => ({
+    const saved = updateDiary(file.id, { companionMessages: companionMessages.map(message => ({
         id: message.id,
         role: message.role,
         text: message.text,
         createdAt: message.createdAt
-    }));
-    file.updatedAt = new Date().toISOString();
-    saveToLocalStorage();
-    loadSidebar();
-    updateEntryMetadata(file);
+    })) });
+    renderHistory();
+    updateEntryMetadata(getDiary(file.id) || file);
+    showSaveStatus(saved);
 }
 
 function sendCompanionMessage(event) {
@@ -460,19 +460,111 @@ function loadFiles() {
     try {
         const currentData = localStorage.getItem("ember_files");
         const legacyData = localStorage.getItem("inklock_files");
-        const savedFiles = JSON.parse(currentData || legacyData);
-        if (!currentData && legacyData) localStorage.setItem("ember_files", legacyData);
-        if (!Array.isArray(savedFiles)) return [];
-        savedFiles.forEach(file => {
-            file.mood = moods[file.mood] ? file.mood : "neutral";
-            file.createdAt = file.createdAt || new Date().toISOString();
-            file.updatedAt = file.updatedAt || file.createdAt;
-        });
-        if (!currentData && legacyData) localStorage.setItem("ember_files", JSON.stringify(savedFiles));
-        return savedFiles;
+        const parseFiles = data => {
+            if (data === null) return null;
+            try {
+                const parsed = JSON.parse(data);
+                return Array.isArray(parsed) ? parsed : null;
+            } catch (error) {
+                return null;
+            }
+        };
+        const currentFiles = parseFiles(currentData);
+        const legacyFiles = parseFiles(legacyData);
+        if (!currentFiles && !legacyFiles) return [];
+
+        const savedFiles = currentFiles ? [...currentFiles] : [];
+        if (legacyFiles) {
+            const currentIds = new Set(currentFiles?.filter(file => file?.id != null).map(file => String(file.id)) || []);
+            savedFiles.push(...legacyFiles.filter(file => file?.id == null || !currentIds.has(String(file.id))));
+        }
+
+        const now = new Date().toISOString();
+        const normalizedFiles = savedFiles
+            .filter(file => file && typeof file === "object" && !Array.isArray(file))
+            .map((file, index) => {
+                const createdAt = file.createdAt || now;
+                return {
+                    ...file,
+                    id: file.id ?? globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${index}`,
+                    title: typeof file.title === "string" ? file.title : "Untitled",
+                    content: typeof file.content === "string" ? file.content : "",
+                    mood: moods[file.mood] ? file.mood : "neutral",
+                    createdAt,
+                    updatedAt: file.updatedAt || createdAt
+                };
+            });
+        const normalizedData = JSON.stringify(normalizedFiles);
+
+        if (currentData !== normalizedData || legacyFiles) {
+            try {
+                localStorage.setItem(DIARY_STORAGE_KEY, normalizedData);
+                if (legacyFiles) localStorage.removeItem("inklock_files");
+            } catch (error) {
+                console.error("[EMBER] Failed to migrate legacy diary data:", error);
+            }
+        }
+        return normalizedFiles;
     } catch (error) {
         return [];
     }
+}
+
+function saveFiles() {
+    try {
+        localStorage.setItem(DIARY_STORAGE_KEY, JSON.stringify(files));
+        return true;
+    } catch (error) {
+        console.error("[EMBER] Failed to save diary data:", error);
+        return false;
+    }
+}
+
+function createDiary(data = {}) {
+    const now = new Date().toISOString();
+    const diary = {
+        ...data,
+        id: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        title: typeof data.title === "string" && data.title ? data.title : "Untitled",
+        content: typeof data.content === "string" ? data.content : "",
+        mood: moods[data.mood] ? data.mood : "neutral",
+        createdAt: data.createdAt || now,
+        updatedAt: data.updatedAt || now
+    };
+    files.push(diary);
+    if (!saveFiles()) {
+        files.pop();
+        return null;
+    }
+    return diary;
+}
+
+function updateDiary(id, changes = {}) {
+    const file = getDiary(id);
+    if (!file) return false;
+
+    const previous = { ...file };
+    Object.assign(file, changes, { id: previous.id, updatedAt: new Date().toISOString() });
+    if (!saveFiles()) {
+        Object.assign(file, previous);
+        return false;
+    }
+    return true;
+}
+
+function deleteDiary(id) {
+    if (!getDiary(id)) return false;
+    const previousFiles = files;
+    files = files.filter(file => file.id !== id);
+    if (!saveFiles()) {
+        files = previousFiles;
+        return false;
+    }
+    return true;
+}
+
+function getDiary(id) {
+    return files.find(file => file.id === id) || null;
 }
 
 // Check if user has set up a password yet
@@ -485,6 +577,29 @@ function checkFirstTimeUser() {
     } else {
         switchScreen("login-screen");
     }
+}
+
+function isDeveloperRecoveryEnabled() {
+    const explicitlyEnabled = new URLSearchParams(location.search).get("devRecovery") === "1";
+    return location.protocol === "file:"
+        || ["localhost", "127.0.0.1", "::1"].includes(location.hostname)
+        || explicitlyEnabled;
+}
+
+function resetLocalTestPasscode() {
+    if (!isDeveloperRecoveryEnabled()) return;
+
+    const confirmed = window.confirm(
+        "Reset only the passcode and its hint? Your diary entries in ember_files will remain unchanged."
+    );
+    if (!confirmed) return;
+
+    ["ember_pass_record", "ember_pass", "inklock_pass", "ember_pass_hint"].forEach(key => {
+        localStorage.removeItem(key);
+    });
+    document.getElementById("pass-input").value = "";
+    document.getElementById("login-error").style.display = "none";
+    switchScreen("setup-screen");
 }
 
 // Utility to switch screens
@@ -677,7 +792,7 @@ function initDashboard() {
         showMoodSelection();
     } else {
         switchScreen("dashboard-screen");
-        loadSidebar();
+        renderHistory();
         openFile(files[0].id);
     }
 }
@@ -685,8 +800,7 @@ function initDashboard() {
 // Create a new diary file
 function createNewFile(defaultTitle = "New Entry", mood = "neutral") {
     const now = new Date().toISOString();
-    const newFile = {
-        id: Date.now().toString(),
+    const newFile = createDiary({
         title: defaultTitle,
         content: "",
         mood,
@@ -694,28 +808,42 @@ function createNewFile(defaultTitle = "New Entry", mood = "neutral") {
         updatedAt: now,
         font: "sans",
         paperColor: "#1a1a1a"
-    };
-    files.push(newFile);
+    });
+    if (!newFile) {
+        window.alert("The new entry could not be saved in this browser.");
+        return;
+    }
     switchScreen("dashboard-screen");
-    saveToLocalStorage();
-    loadSidebar();
+    renderHistory();
     openFile(newFile.id);
 }
 
 // Render the sidebar file list
-function loadSidebar() {
+function renderHistory() {
     const listContainer = document.getElementById("file-list");
     if (!listContainer) return;
     
     listContainer.innerHTML = "";
     
-    files.forEach(file => {
+    files.slice().sort((left, right) => {
+        const leftDate = Date.parse(left.updatedAt || left.createdAt) || 0;
+        const rightDate = Date.parse(right.updatedAt || right.createdAt) || 0;
+        return rightDate - leftDate;
+    }).forEach(file => {
         const div = document.createElement("div");
         const mood = moods[file.mood] || moods.neutral;
+        const preview = (file.content || "").replace(/\s+/g, " ").trim();
         div.className = `file-item mood-accent-${file.mood || "neutral"} ${file.id === currentFileId ? 'active' : ''}`;
-        div.innerHTML = `<span class="file-item-title"></span><span class="file-item-meta">${mood.emoji} ${mood.label} · ${formatEntryDate(file.updatedAt || file.createdAt)}</span>`;
+        div.innerHTML = `<span class="file-item-title"></span><span class="file-item-meta"></span><span class="file-item-preview"></span><span class="file-item-actions"><button class="history-action" type="button" data-action="open">Open</button><button class="history-action" type="button" data-action="edit">Edit</button><button class="history-action history-delete" type="button" data-action="delete">Delete</button></span>`;
         div.querySelector(".file-item-title").textContent = file.title || "Untitled";
-        div.onclick = () => openFile(file.id);
+        div.querySelector(".file-item-meta").textContent = `${formatEntryDate(file.updatedAt || file.createdAt)} · ${mood.emoji} ${mood.label}`;
+        div.querySelector(".file-item-preview").textContent = preview || "No preview yet";
+        div.querySelector('[data-action="open"]').addEventListener("click", () => openFile(file.id));
+        div.querySelector('[data-action="edit"]').addEventListener("click", () => {
+            openFile(file.id);
+            document.getElementById("diary-text")?.focus();
+        });
+        div.querySelector('[data-action="delete"]').addEventListener("click", () => deleteFile(file.id));
         listContainer.appendChild(div);
     });
 }
@@ -723,7 +851,7 @@ function loadSidebar() {
 // Open a specific file into the editor
 function openFile(id) {
     currentFileId = id;
-    const file = files.find(f => f.id === id);
+    const file = getDiary(id);
     if (!file) return;
 
     const titleInput = document.getElementById("file-title-input");
@@ -744,7 +872,7 @@ function openFile(id) {
     loadCompanionMessages(file);
 
     updateEditorStyles();
-    loadSidebar();
+    renderHistory();
 }
 
 // Automatically save changes as you type or change settings
@@ -760,152 +888,23 @@ function autoSaveCurrentFile() {
 
     if (!titleInput || !textInput || !fontSelect || !colorPicker || !moodSelect) return;
 
-    file.title = titleInput.value.trim() || "Untitled";
-    file.content = textInput.value;
-    file.font = fontSelect.value;
-    file.paperColor = colorPicker.value;
-    file.mood = moods[moodSelect.value] ? moodSelect.value : "neutral";
-    file.updatedAt = new Date().toISOString();
-
-    const saved = saveToLocalStorage();
-    loadSidebar();
-    applyMoodTheme(file.mood);
-    updateEntryMetadata(file);
+    const saved = updateDiary(currentFileId, {
+        title: titleInput.value.trim() || "Untitled",
+        content: textInput.value,
+        font: fontSelect.value,
+        paperColor: colorPicker.value,
+        mood: moods[moodSelect.value] ? moodSelect.value : "neutral"
+    });
+    const updatedFile = getDiary(currentFileId);
+    renderHistory();
+    if (updatedFile) {
+        applyMoodTheme(updatedFile.mood);
+        updateEntryMetadata(updatedFile);
+    }
     showSaveStatus(saved);
 }
 
-function showSaveStatus(saved = true) {
-    const status = document.getElementById("save-status");
-    if (status) status.textContent = saved ? "Saved locally" : "Unable to save locally";
+function updateCurrentFile() {
+    if (!files.some(file => file.id === currentFileId)) return;
+    autoSaveCurrentFile();
 }
-
-function updateEntryMetadata(file) {
-    const mood = moods[file.mood] || moods.neutral;
-    const label = document.getElementById("entry-mood-label");
-    const date = document.getElementById("entry-date");
-    if (label) {
-        label.textContent = `${mood.emoji} ${mood.label}`;
-        label.className = `entry-mood-label mood-text-${file.mood}`;
-    }
-    if (date) date.textContent = formatEntryDate(file.updatedAt || file.createdAt);
-}
-
-// Update the visual paper style (font & color)
-function updateEditorStyles() {
-    const file = files.find(f => f.id === currentFileId);
-    if (!file) return;
-
-    const paperSheet = document.getElementById("paper-sheet");
-    const fontControl = document.getElementById("font-select");
-    const colorControl = document.getElementById("paper-color-picker");
-    if (!fontControl || !colorControl) return;
-
-    const fontSelect = fontControl.value;
-    const colorPicker = colorControl.value;
-
-    if (paperSheet) {
-        paperSheet.style.backgroundColor = colorPicker;
-        paperSheet.className = "paper-sheet font-" + fontSelect;
-    }
-
-    file.font = fontSelect;
-    file.paperColor = colorPicker;
-    saveToLocalStorage();
-}
-
-// Helper to save state to localStorage
-function saveToLocalStorage() {
-    try {
-        localStorage.setItem("ember_files", JSON.stringify(files));
-        return true;
-    } catch (error) {
-        return false;
-    }
-}
-
-function evaluatePassphraseStrength(password) {
-    let score = 0;
-    if (!password) return { score: 0, label: "Needs work", rating: "weak" };
-    if (password.length >= 8) score += 1;
-    if (password.length >= 12) score += 1;
-    if (/[a-z]/.test(password) && /[A-Z]/.test(password)) score += 1;
-    if (/[0-9]/.test(password)) score += 1;
-    if (/[^A-Za-z0-9]/.test(password)) score += 1;
-
-    if (score <= 2) return { score: 1, label: "Needs work", rating: "weak" };
-    if (score === 3) return { score: 2, label: "Good", rating: "medium" };
-    if (score === 4) return { score: 3, label: "Strong", rating: "good" };
-    return { score: 4, label: "Excellent", rating: "strong" };
-}
-
-function updatePassStrengthDisplay() {
-    const input = document.getElementById("pass-create");
-    const meter = document.getElementById("pass-strength");
-    const text = document.getElementById("pass-strength-text");
-    if (!input || !meter || !text) return;
-
-    const result = evaluatePassphraseStrength(input.value);
-    const segment = meter.querySelector("span");
-    if (!segment) return;
-
-    const widths = ["12%", "38%", "68%", "100%"];
-    meter.dataset.level = result.rating;
-    segment.style.width = widths[Math.min(result.score, widths.length - 1)];
-    text.textContent = result.label;
-    text.className = `strength-text ${result.rating}`;
-}
-
-function applyMemorySuggestion(suggestion) {
-    const input = document.getElementById("pass-create");
-    if (!input) return;
-    input.value = suggestion;
-    updatePassStrengthDisplay();
-    input.focus();
-}
-
-function setupEditorEvents() {
-    initializeTheme();
-    detectBrowserLocale();
-    initializeAiSettings();
-    updateCompanionIdentity();
-    document.getElementById("pass-create")?.addEventListener("input", updatePassStrengthDisplay);
-    document.querySelectorAll(".memory-chip").forEach(button => button.addEventListener("click", () => applyMemorySuggestion(button.dataset.suggestion)));
-    document.getElementById("new-file-button")?.addEventListener("click", () => showMoodSelection());
-    document.querySelectorAll(".mood-option").forEach(option => option.addEventListener("click", () => selectMood(option.dataset.mood)));
-    ["file-title-input", "diary-text", "mood-select", "font-select", "paper-color-picker"].forEach(id => {
-        document.getElementById(id)?.addEventListener("input", () => {
-            autoSaveCurrentFile();
-            if (id === "font-select" || id === "paper-color-picker") updateEditorStyles();
-        });
-        document.getElementById(id)?.addEventListener("change", autoSaveCurrentFile);
-    });
-    window.addEventListener("pagehide", autoSaveCurrentFile);
-    document.getElementById("companion-form")?.addEventListener("submit", sendCompanionMessage);
-    document.getElementById("companion-launcher")?.addEventListener("click", () => toggleCompanion(true));
-    document.getElementById("companion-close")?.addEventListener("click", () => toggleCompanion(false));
-    document.getElementById("companion-input")?.addEventListener("input", event => {
-        const button = document.querySelector(".companion-send");
-        if (button && !companionBusy) button.disabled = !event.target.value.trim();
-    });
-    document.getElementById("companion-input")?.addEventListener("keydown", event => {
-        if (event.key === "Enter" && !event.shiftKey) {
-            event.preventDefault();
-            document.getElementById("companion-form")?.requestSubmit();
-        }
-    });
-    document.querySelectorAll(".secret-toggle").forEach(button => button.addEventListener("click", () => {
-        const input = document.getElementById(button.dataset.target);
-        if (!input) return;
-        const isVisible = input.type === "password";
-        input.type = isVisible ? "text" : "password";
-        button.textContent = isVisible ? "Hide" : "Show";
-        button.setAttribute("aria-pressed", String(isVisible));
-        const label = button.dataset.target === "pass-input" ? "secret code" : button.dataset.target === "pass-confirm" ? "confirmation code" : "code";
-        button.setAttribute("aria-label", `${isVisible ? "Hide" : "Show"} ${label}`);
-    }));
-}
-
-document.addEventListener("DOMContentLoaded", () => {
-    updatePassStrengthDisplay();
-    setupEditorEvents();
-});
