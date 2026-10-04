@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ember | Private Journal</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <header>
+        <div class="logo">Ember.</div>
+    </header>
+
+    <!-- SCREEN 1: Landing Page -->
+    <section id="landing-screen" class="screen active">
+        <div class="hero">
+            <h1>Your private thoughts, completely secure.</h1>
+            <p>A timeless digital space designed for your reflections, memories, and ideas. Protected locally on your device.</p>
+            <button class="btn" onclick="checkFirstTimeUser()">Start</button>
+        </div>
+    </section>
+
+    <!-- SCREEN 2A: Set Code (First time only) -->
+    <section id="setup-screen" class="screen">
+        <div class="card vault-card">
+            <div class="vault-header">
+                <span class="vault-badge">Ember Vault</span>
+                <h2>Create Your Memory Code</h2>
+            </div>
+            <p>Choose a personal passphrase that feels memorable to you, not random and forgettable.</p>
+            <div class="strength-row">
+                <span class="strength-label">Code strength</span>
+                <span id="pass-strength-text" class="strength-text">Needs work</span>
+            </div>
+            <div id="pass-strength" class="strength-meter" aria-hidden="true"><span></span></div>
+            <div class="secret-field">
+                <input type="password" id="pass-create" placeholder="Try: EmberMoon27" autocomplete="new-password" minlength="8" required>
+                <button class="secret-toggle" type="button" data-target="pass-create" aria-label="Show code" aria-pressed="false">Show</button>
+            </div>
+            <div class="memory-suggestions" aria-label="Memorable code patterns">
+                <button type="button" class="memory-chip" data-suggestion="EmberBloom21">EmberBloom21</button>
+                <button type="button" class="memory-chip" data-suggestion="LunaField07">LunaField07</button>
+                <button type="button" class="memory-chip" data-suggestion="MapleHarbor13">MapleHarbor13</button>
+                <button type="button" class="memory-chip" data-suggestion="NorthStar42">NorthStar42</button>
+            </div>
+            <label class="hint-field" for="pass-hint">
+                <span>Memory hint</span>
+                <input type="text" id="pass-hint" placeholder="A clue only you understand" maxlength="80">
+            </label>
+            <div class="secret-field">
+                <input type="password" id="pass-confirm" placeholder="Confirm your passphrase" autocomplete="new-password" minlength="8" required>
+                <button class="secret-toggle" type="button" data-target="pass-confirm" aria-label="Show confirmation code" aria-pressed="false">Show</button>
+            </div>
+            <div id="setup-error" class="error-msg">Codes do not match. Try again.</div>
+            <button class="btn" onclick="saveNewPassword()">Lock My Diary</button>
+        </div>
+    </section>
+
+    <!-- SCREEN 2B: Enter Code (Returning user) -->
+    <section id="login-screen" class="screen">
+        <div class="card vault-card narrow">
+            <div class="vault-header">
+                <span class="vault-badge">Ember Vault</span>
+                <h2>Welcome Back</h2>
+            </div>
+            <p>Use your personal passphrase to re-enter the diary.</p>
+            <div class="memory-note">Think of the pattern you chose earlier.</div>
+            <div class="secret-field">
+                <input type="password" id="pass-input" placeholder="Your secret passphrase" autocomplete="current-password" required>
+                <button class="secret-toggle" type="button" data-target="pass-input" aria-label="Show secret code" aria-pressed="false">Show</button>
+            </div>
+            <div id="login-error" class="error-msg">Incorrect code. Try again.</div>
+            <button class="btn" onclick="verifyPassword()">Unlock</button>
+        </div>
+    </section>
+
+    <section id="mood-screen" class="screen">
+        <div class="mood-panel">
+            <span class="eyebrow">A new page begins here</span>
+            <h2>How are you feeling today?</h2>
+            <p>Choose the atmosphere you want to carry into this entry.</p>
+            <div class="mood-options" role="group" aria-label="Choose your mood">
+                <button class="mood-option mood-happy" type="button" data-mood="happy">
+                    <span class="mood-emoji" aria-hidden="true">😊</span><span>Happy</span>
+                </button>
+                <button class="mood-option mood-neutral" type="button" data-mood="neutral">
+                    <span class="mood-emoji" aria-hidden="true">😐</span><span>Neutral</span>
+                </button>
+                <button class="mood-option mood-sad" type="button" data-mood="sad">
+                    <span class="mood-emoji" aria-hidden="true">😢</span><span>Sad</span>
+                </button>
+                <button class="mood-option mood-angry" type="button" data-mood="angry">
+                    <span class="mood-emoji" aria-hidden="true">😡</span><span>Angry</span>
+                </button>
+            </div>
+        </div>
+    </section>
+
+    <!-- SCREEN 3: The Diary Dashboard -->
+    <section id="dashboard-screen" class="screen">
+        <div class="dashboard-container">
+            <div class="dashboard-heading">
+                <div>
+                    <span class="eyebrow">A private place to pause</span>
+                    <h2>My Journal</h2>
+                </div>
+                <span class="ember-mark" aria-hidden="true">✦</span>
+            </div>
+            <p style="margin-bottom: 1.5rem;">Write down what's on your mind today.</p>
+            
+            <div class="entry-box">
+                <aside class="file-sidebar" aria-label="Journal entries">
+                    <div class="sidebar-heading">
+                        <span>Entries</span>
+                        <button class="icon-btn" type="button" id="new-file-button" aria-label="Create a new entry">+</button>
+                    </div>
+                    <div id="file-list"></div>
+                </aside>
+                <main class="editor-panel">
+                    <input type="text" id="file-title-input" class="title-input" placeholder="Entry title" aria-label="Entry title">
+                    <div class="editor-toolbar">
+                        <label class="mood-control">Mood
+                            <select id="mood-select" aria-label="Entry mood">
+                                <option value="happy">😊 Happy</option>
+                                <option value="neutral">😐 Neutral</option>
+                                <option value="sad">😢 Sad</option>
+                                <option value="angry">😡 Angry</option>
+                            </select>
+                        </label>
+                        <label>Font
+                            <select id="font-select" aria-label="Entry font">
+                                <option value="sans">Sans</option>
+                                <option value="serif">Serif</option>
+                                <option value="slab">Slab</option>
+                                <option value="humanist">Humanist</option>
+                                <option value="hand">Handwritten</option>
+                                <option value="script">Script</option>
+                                <option value="typewriter">Typewriter</option>
+                                <option value="mono">Mono</option>
+                                <option value="display">Display</option>
+                                <option value="editorial">Editorial</option>
+                                <option value="rounded">Rounded</option>
+                            </select>
+                        </label>
+                        <label>Paper
+                            <input type="color" id="paper-color-picker" value="#1a1a1a" aria-label="Paper color">
+                        </label>
+                        <details class="theme-settings" id="theme-settings">
+                            <summary>Settings</summary>
+                            <div class="theme-panel">
+                                <label class="theme-picker-label">Custom color
+                                    <input type="color" id="text-color-picker" value="#f4eadf" aria-label="Custom website text color">
+                                </label>
+                                <div class="color-presets" aria-label="Text color presets">
+                                    <button type="button" class="color-swatch" data-text-color="#171412" style="--swatch: #171412" aria-label="Black"></button>
+                                    <button type="button" class="color-swatch" data-text-color="#ffffff" style="--swatch: #ffffff" aria-label="White"></button>
+                                    <button type="button" class="color-swatch" data-text-color="#4a4540" style="--swatch: #4a4540" aria-label="Dark gray"></button>
+                                    <button type="button" class="color-swatch" data-text-color="#a9a19a" style="--swatch: #a9a19a" aria-label="Soft gray"></button>
+                                    <button type="button" class="color-swatch" data-text-color="#6d4937" style="--swatch: #6d4937" aria-label="Brown"></button>
+                                    <button type="button" class="color-swatch" data-text-color="#e6d2b8" style="--swatch: #e6d2b8" aria-label="Beige"></button>
+                                    <button type="button" class="color-swatch" data-text-color="#f2a1b3" style="--swatch: #f2a1b3" aria-label="Pink"></button>
+                                    <button type="button" class="color-swatch" data-text-color="#c65f72" style="--swatch: #c65f72" aria-label="Rose"></button>
+                                    <button type="button" class="color-swatch" data-text-color="#d94b4b" style="--swatch: #d94b4b" aria-label="Red"></button>
+                                    <button type="button" class="color-swatch" data-text-color="#ed9b5a" style="--swatch: #ed9b5a" aria-label="Orange"></button>
+                                    <button type="button" class="color-swatch" data-text-color="#f2cb70" style="--swatch: #f2cb70" aria-label="Yellow"></button>
+                                    <button type="button" class="color-swatch" data-text-color="#75ad76" style="--swatch: #75ad76" aria-label="Green"></button>
+                                    <button type="button" class="color-swatch" data-text-color="#83cbb4" style="--swatch: #83cbb4" aria-label="Mint"></button>
+                                    <button type="button" class="color-swatch" data-text-color="#6fa8dc" style="--swatch: #6fa8dc" aria-label="Blue"></button>
+                                    <button type="button" class="color-swatch" data-text-color="#8ac9e8" style="--swatch: #8ac9e8" aria-label="Sky blue"></button>
+                                    <button type="button" class="color-swatch" data-text-color="#344d73" style="--swatch: #344d73" aria-label="Navy"></button>
+                                    <button type="button" class="color-swatch" data-text-color="#9b78ba" style="--swatch: #9b78ba" aria-label="Purple"></button>
+                                    <button type="button" class="color-swatch" data-text-color="#c5a7dc" style="--swatch: #c5a7dc" aria-label="Lavender"></button>
+                                </div>
+                            </div>
+                        </details>
+                    </div>
+                    <div id="paper-sheet" class="paper-sheet font-sans">
+                        <textarea id="diary-text" placeholder="Dear Diary..." aria-label="Entry content"></textarea>
+                    </div>
+                    <div class="entry-meta">
+                        <span id="entry-mood-label" class="entry-mood-label">😊 Happy</span>
+                        <span id="entry-date" class="entry-date"></span>
+                        <p id="save-status" class="save-status" role="status">Saved locally</p>
+                    </div>
+                </main>
+            </div>
+        </div>
+    </section>
+
+    <script src="script.js" defer></script>
+</body>
+</html>
